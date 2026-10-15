@@ -12,7 +12,7 @@
 
     <groupId>com.oficina</groupId>
     <artifactId>tc-oficina-os-service</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <name>tc-oficina-os-service</name>
     <description>OS Service - Microservice for Ordem Serviço management</description>
     <packaging>jar</packaging>
