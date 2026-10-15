@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tc-oficina-os-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: tc-oficina-os-service
+  template:
+    metadata:
+      labels:
+        app: tc-oficina-os-service
+    spec:
+      containers:
+      - name: tc-oficina-os-service
+        image: tc-oficina-os-service:latest
+        ports:
+        - containerPort: 8081
+        envFrom:
+        - configMapRef:
+            name: os-service-config
+        resources:
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
