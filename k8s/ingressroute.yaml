@@ -1,0 +1,26 @@
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: os-service-ingressroute
+  namespace: oficina-os
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`35.84.122.229`) && PathPrefix(`/os`)
+      kind: Rule
+      services:
+        - name: tc-oficina-os-service
+          port: 8081
+      middlewares:
+        - name: strip-os-prefix
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-os-prefix
+  namespace: oficina-os
+spec:
+  stripPrefix:
+    prefixes:
+      - /os
