@@ -1,9 +1,11 @@
 apiVersion: v1
 kind: ConfigMap
-metadata name: os-service-config
+metadata:
+  name: os-service-config
+  namespace: oficina-os
 data:
-  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/oficina_os
-  SPRING_DATASOURCE_USERNAME: oficina_user
-  SPRING_DATASOURCE_PASSWORD: oficina_pass
-  SPRING_KAFKA_BOOTSTRAP-SERVERS: kafka:9092
-  SPRING_APPLICATION_NAME: tc-oficina-os-service
+  SPRING_PROFILES_ACTIVE: "k8s"
+  SERVER_PORT: "8081"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka.oficina-infra.svc.cluster.local:9092"
+  MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "health,info,metrics,prometheus"
+  MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS: "always"
