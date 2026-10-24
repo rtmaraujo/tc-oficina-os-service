@@ -54,7 +54,7 @@ curl "http://localhost:8081/api/os/cliente/12345678909"
 curl -X PUT "http://localhost:8081/api/os/1/status?novoStatus=APROVADA"
 ```
 
-Swagger UI: `http://localhost:8081/swagger-ui.html`
+Swagger desabilitado no perfil local. No perfil `k8s`: `http://35.84.122.229/os/swagger-ui.html`.
 
 ## Status da OS
 
