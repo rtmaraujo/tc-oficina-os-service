@@ -54,7 +54,7 @@ curl "http://localhost:8081/api/os/cliente/12345678909"
 curl -X PUT "http://localhost:8081/api/os/1/status?novoStatus=APROVADA"
 ```
 
-Swagger desabilitado no perfil local. No perfil `k8s`: `http://35.84.122.229/os/swagger-ui.html`.
+Swagger desabilitado no perfil local. No perfil `k8s`: `http://44.253.115.185/os/swagger-ui.html`.
 
 ## Status da OS
 
@@ -156,9 +156,9 @@ kubectl apply -f k8s/deployment.yaml
 kubectl apply -f k8s/ingressroute.yaml
 ```
 
-- Imagem: `097735115452.dkr.ecr.us-west-2.amazonaws.com/tc-oficina-os-service:latest`
+- Imagem: `200111905660.dkr.ecr.us-west-2.amazonaws.com/tc-oficina-os-service:latest`
 - 2 réplicas, probes em `/actuator/health/{readiness,liveness}`
-- Rota Traefik: `http://35.84.122.229/os/*` (prefixo removido)
+- Rota Traefik: `http://44.253.115.185/os/*` (prefixo removido)
 
 ## CI/CD
 

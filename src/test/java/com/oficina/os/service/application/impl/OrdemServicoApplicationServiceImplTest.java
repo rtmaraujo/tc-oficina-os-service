@@ -2,6 +2,7 @@ package com.oficina.os.service.application.impl;
 
 import com.oficina.os.service.domain.OrdemServico;
 import com.oficina.os.service.domain.StatusOS;
+import com.oficina.os.service.infrastructure.persistence.OrdemServicoEntity;
 import com.oficina.os.service.infrastructure.repository.OrdemServicoRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -35,17 +36,20 @@ class OrdemServicoApplicationServiceImplTest {
         service = new OrdemServicoApplicationServiceImpl(repository, kafkaTemplate);
     }
 
-    private OrdemServico ordemExistente() {
-        return new OrdemServico(1L, "OS-1", "Revisao", StatusOS.ABERTA, "12345678909", 0.0);
+    private OrdemServicoEntity ordemExistente() {
+        OrdemServicoEntity entity = new OrdemServicoEntity(
+            new OrdemServico(1L, "OS-1", "Revisao", StatusOS.ABERTA, "12345678909", 0.0));
+        entity.setId(1L);
+        return entity;
     }
 
     @Test
     @DisplayName("Deve criar ordem de servico e publicar evento os-created")
     void shouldCreateOrderServiceAndPublishEvent() {
-        when(repository.save(any(OrdemServico.class))).thenAnswer(invocation -> {
-            OrdemServico os = invocation.getArgument(0);
-            os.setId(10L);
-            return os;
+        when(repository.save(any(OrdemServicoEntity.class))).thenAnswer(invocation -> {
+            OrdemServicoEntity entity = invocation.getArgument(0);
+            entity.setId(10L);
+            return entity;
         });
 
         OrdemServico result = service.criarOrdemServico("12345678909", "Revisao");
@@ -57,16 +61,15 @@ class OrdemServicoApplicationServiceImplTest {
         assertEquals("12345678909", result.getClienteCpf());
         assertEquals(0.0, result.getOrcamento());
         assertEquals(StatusOS.ABERTA, result.getStatus());
-        verify(repository).save(any(OrdemServico.class));
+        verify(repository).save(any(OrdemServicoEntity.class));
         verify(kafkaTemplate).send(eq("os-created"), eq("10"), contains("status=ABERTA"));
     }
 
     @Test
     @DisplayName("Deve atualizar status para APROVADA e publicar evento")
     void shouldUpdateStatusToApproved() {
-        OrdemServico os = ordemExistente();
-        when(repository.findById(1L)).thenReturn(Optional.of(os));
-        when(repository.save(any(OrdemServico.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(repository.findById(1L)).thenReturn(Optional.of(ordemExistente()));
+        when(repository.save(any(OrdemServicoEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         OrdemServico result = service.atualizarStatus(1L, StatusOS.APROVADA);
 
@@ -78,9 +81,8 @@ class OrdemServicoApplicationServiceImplTest {
     @Test
     @DisplayName("Deve atualizar status para EXECUCAO e publicar evento")
     void shouldUpdateStatusToExecution() {
-        OrdemServico os = ordemExistente();
-        when(repository.findById(1L)).thenReturn(Optional.of(os));
-        when(repository.save(any(OrdemServico.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(repository.findById(1L)).thenReturn(Optional.of(ordemExistente()));
+        when(repository.save(any(OrdemServicoEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         OrdemServico result = service.atualizarStatus(1L, StatusOS.EXECUCAO);
 
@@ -91,9 +93,8 @@ class OrdemServicoApplicationServiceImplTest {
     @Test
     @DisplayName("Deve atualizar status para CONCLUIDA e publicar evento")
     void shouldUpdateStatusToCompleted() {
-        OrdemServico os = ordemExistente();
-        when(repository.findById(1L)).thenReturn(Optional.of(os));
-        when(repository.save(any(OrdemServico.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(repository.findById(1L)).thenReturn(Optional.of(ordemExistente()));
+        when(repository.save(any(OrdemServicoEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         OrdemServico result = service.atualizarStatus(1L, StatusOS.CONCLUIDA);
 
@@ -104,9 +105,8 @@ class OrdemServicoApplicationServiceImplTest {
     @Test
     @DisplayName("Deve atualizar status para CANCELADA e publicar evento")
     void shouldUpdateStatusToCancelled() {
-        OrdemServico os = ordemExistente();
-        when(repository.findById(1L)).thenReturn(Optional.of(os));
-        when(repository.save(any(OrdemServico.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(repository.findById(1L)).thenReturn(Optional.of(ordemExistente()));
+        when(repository.save(any(OrdemServicoEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         OrdemServico result = service.atualizarStatus(1L, StatusOS.CANCELADA);
 
@@ -117,9 +117,8 @@ class OrdemServicoApplicationServiceImplTest {
     @Test
     @DisplayName("Nao deve publicar evento para status sem tratamento")
     void shouldNotPublishEventForOpenStatus() {
-        OrdemServico os = ordemExistente();
-        when(repository.findById(1L)).thenReturn(Optional.of(os));
-        when(repository.save(any(OrdemServico.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(repository.findById(1L)).thenReturn(Optional.of(ordemExistente()));
+        when(repository.save(any(OrdemServicoEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         OrdemServico result = service.atualizarStatus(1L, StatusOS.ABERTA);
 
@@ -133,15 +132,14 @@ class OrdemServicoApplicationServiceImplTest {
         when(repository.findById(99L)).thenReturn(Optional.empty());
 
         assertNull(service.atualizarStatus(99L, StatusOS.APROVADA));
-        verify(repository, never()).save(any(OrdemServico.class));
+        verify(repository, never()).save(any(OrdemServicoEntity.class));
         verifyNoInteractions(kafkaTemplate);
     }
 
     @Test
     @DisplayName("Deve consultar OS por id")
     void shouldFindOrderById() {
-        OrdemServico os = ordemExistente();
-        when(repository.findById(1L)).thenReturn(Optional.of(os));
+        when(repository.findById(1L)).thenReturn(Optional.of(ordemExistente()));
 
         assertNotNull(service.consultarPorId(1L));
     }
@@ -157,7 +155,7 @@ class OrdemServicoApplicationServiceImplTest {
     @Test
     @DisplayName("Deve listar OS por cliente")
     void shouldListOrdersByClient() {
-        List<OrdemServico> ordens = List.of(ordemExistente());
+        List<OrdemServicoEntity> ordens = List.of(ordemExistente());
         when(repository.findByClienteCpf("12345678909")).thenReturn(ordens);
 
         List<OrdemServico> result = service.listarPorCliente("12345678909");

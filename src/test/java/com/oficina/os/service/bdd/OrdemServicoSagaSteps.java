@@ -3,13 +3,13 @@ package com.oficina.os.service.bdd;
 import com.oficina.os.service.application.impl.OrdemServicoApplicationServiceImpl;
 import com.oficina.os.service.domain.OrdemServico;
 import com.oficina.os.service.domain.StatusOS;
+import com.oficina.os.service.infrastructure.persistence.OrdemServicoEntity;
 import com.oficina.os.service.infrastructure.repository.OrdemServicoRepository;
 import io.cucumber.java.Before;
 import io.cucumber.java.pt.Dado;
 import io.cucumber.java.pt.E;
 import io.cucumber.java.pt.Entao;
 import io.cucumber.java.pt.Quando;
-import org.mockito.Mockito;
 import org.springframework.kafka.core.KafkaTemplate;
 
 import java.util.ArrayList;
@@ -33,7 +33,7 @@ import static org.mockito.Mockito.*;
  */
 public class OrdemServicoSagaSteps {
 
-    private final Map<Long, OrdemServico> bancoEmMemoria = new LinkedHashMap<>();
+    private final Map<Long, OrdemServicoEntity> bancoEmMemoria = new LinkedHashMap<>();
     private final List<String> eventosPublicados = new ArrayList<>();
     private final AtomicLong sequenciaId = new AtomicLong(0);
 
@@ -51,24 +51,17 @@ public class OrdemServicoSagaSteps {
 
         OrdemServicoRepository repository = mock(OrdemServicoRepository.class);
 
-        when(repository.save(any(OrdemServico.class))).thenAnswer(invocation -> {
-            OrdemServico os = invocation.getArgument(0);
-            if (os.getId() == null) {
-                os.setId(sequenciaId.incrementAndGet());
+        when(repository.save(any(OrdemServicoEntity.class))).thenAnswer(invocation -> {
+            OrdemServicoEntity entity = invocation.getArgument(0);
+            if (entity.getId() == null) {
+                entity.setId(sequenciaId.incrementAndGet());
             }
-            bancoEmMemoria.put(os.getId(), os);
-            return os;
+            bancoEmMemoria.put(entity.getId(), entity);
+            return entity;
         });
 
         when(repository.findById(any(Long.class)))
             .thenAnswer(invocation -> Optional.ofNullable(bancoEmMemoria.get(invocation.getArgument(0))));
-
-        when(repository.findByClienteCpf(anyString())).thenAnswer(invocation -> {
-            String cpf = invocation.getArgument(0);
-            return bancoEmMemoria.values().stream()
-                .filter(os -> cpf.equals(os.getClienteCpf()))
-                .toList();
-        });
 
         @SuppressWarnings("unchecked")
         KafkaTemplate<String, String> kafkaTemplate = mock(KafkaTemplate.class);
