@@ -1,8 +1,10 @@
 package com.oficina.os.service.application.impl;
 
+import com.oficina.os.service.application.saga.SagaOrchestrator;
 import com.oficina.os.service.domain.OrdemServico;
 import com.oficina.os.service.domain.StatusOS;
 import com.oficina.os.service.infrastructure.persistence.OrdemServicoEntity;
+import com.oficina.os.service.infrastructure.persistence.OrdemServicoHistoricoEntity;
 import com.oficina.os.service.infrastructure.repository.OrdemServicoRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -10,7 +12,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.core.KafkaTemplate;
 
 import java.util.List;
 import java.util.Optional;
@@ -27,13 +28,13 @@ class OrdemServicoApplicationServiceImplTest {
     private OrdemServicoRepository repository;
 
     @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
+    private SagaOrchestrator sagaOrchestrator;
 
     private OrdemServicoApplicationServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new OrdemServicoApplicationServiceImpl(repository, kafkaTemplate);
+        service = new OrdemServicoApplicationServiceImpl(repository, sagaOrchestrator);
     }
 
     private OrdemServicoEntity ordemExistente() {
@@ -44,8 +45,8 @@ class OrdemServicoApplicationServiceImplTest {
     }
 
     @Test
-    @DisplayName("Deve criar ordem de servico e publicar evento os-created")
-    void shouldCreateOrderServiceAndPublishEvent() {
+    @DisplayName("Deve criar OS, registrar historico e iniciar a saga")
+    void shouldCreateOrderServiceAndStartSaga() {
         when(repository.save(any(OrdemServicoEntity.class))).thenAnswer(invocation -> {
             OrdemServicoEntity entity = invocation.getArgument(0);
             entity.setId(10L);
@@ -62,12 +63,14 @@ class OrdemServicoApplicationServiceImplTest {
         assertEquals(0.0, result.getOrcamento());
         assertEquals(StatusOS.ABERTA, result.getStatus());
         verify(repository).save(any(OrdemServicoEntity.class));
-        verify(kafkaTemplate).send(eq("os-created"), eq("10"), contains("status=ABERTA"));
+        verify(sagaOrchestrator).registrarHistorico(any(OrdemServicoEntity.class), isNull(),
+            eq("ABERTA"), anyString(), isNull());
+        verify(sagaOrchestrator).iniciarSaga(any(OrdemServicoEntity.class));
     }
 
     @Test
-    @DisplayName("Deve atualizar status para APROVADA e publicar evento")
-    void shouldUpdateStatusToApproved() {
+    @DisplayName("Deve atualizar status manualmente e registrar historico")
+    void shouldUpdateStatusManually() {
         when(repository.findById(1L)).thenReturn(Optional.of(ordemExistente()));
         when(repository.save(any(OrdemServicoEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -75,55 +78,40 @@ class OrdemServicoApplicationServiceImplTest {
 
         assertEquals(StatusOS.APROVADA, result.getStatus());
         assertNotNull(result.getDataAtualizacao());
-        verify(kafkaTemplate).send(eq("budget-approved"), eq("1"), contains("OS-1"));
+        verify(sagaOrchestrator).registrarHistorico(any(OrdemServicoEntity.class),
+            eq(StatusOS.ABERTA), eq("APROVADA"), anyString(), isNull());
     }
 
     @Test
-    @DisplayName("Deve atualizar status para EXECUCAO e publicar evento")
-    void shouldUpdateStatusToExecution() {
+    @DisplayName("Deve delegar cancelamento para a compensacao da saga")
+    void shouldDelegateCancellationToSaga() {
+        OrdemServico cancelada = new OrdemServico(1L, "OS-1", "Revisao",
+            StatusOS.CANCELADA, "12345678909", 0.0);
         when(repository.findById(1L)).thenReturn(Optional.of(ordemExistente()));
-        when(repository.save(any(OrdemServicoEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
-
-        OrdemServico result = service.atualizarStatus(1L, StatusOS.EXECUCAO);
-
-        assertEquals(StatusOS.EXECUCAO, result.getStatus());
-        verify(kafkaTemplate).send(eq("order-finalized"), eq("1"), contains("OS-1"));
-    }
-
-    @Test
-    @DisplayName("Deve atualizar status para CONCLUIDA e publicar evento")
-    void shouldUpdateStatusToCompleted() {
-        when(repository.findById(1L)).thenReturn(Optional.of(ordemExistente()));
-        when(repository.save(any(OrdemServicoEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
-
-        OrdemServico result = service.atualizarStatus(1L, StatusOS.CONCLUIDA);
-
-        assertEquals(StatusOS.CONCLUIDA, result.getStatus());
-        verify(kafkaTemplate).send(eq("order-completed"), eq("1"), contains("OS-1"));
-    }
-
-    @Test
-    @DisplayName("Deve atualizar status para CANCELADA e publicar evento")
-    void shouldUpdateStatusToCancelled() {
-        when(repository.findById(1L)).thenReturn(Optional.of(ordemExistente()));
-        when(repository.save(any(OrdemServicoEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(sagaOrchestrator.compensarPorOs(eq(1L), anyString())).thenReturn(cancelada);
 
         OrdemServico result = service.atualizarStatus(1L, StatusOS.CANCELADA);
 
         assertEquals(StatusOS.CANCELADA, result.getStatus());
-        verify(kafkaTemplate).send(eq("order-cancelled"), eq("1"), contains("OS-1"));
+        verify(sagaOrchestrator).compensarPorOs(eq(1L), anyString());
+        verify(repository, never()).save(any(OrdemServicoEntity.class));
     }
 
     @Test
-    @DisplayName("Nao deve publicar evento para status sem tratamento")
-    void shouldNotPublishEventForOpenStatus() {
-        when(repository.findById(1L)).thenReturn(Optional.of(ordemExistente()));
-        when(repository.save(any(OrdemServicoEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+    @DisplayName("Deve delegar finalizacao para o orquestrador")
+    void shouldDelegateFinalization() {
+        OrdemServicoEntity entity = ordemExistente();
+        when(repository.findById(1L)).thenReturn(Optional.of(entity));
+        when(sagaOrchestrator.finalizar(eq(entity), anyString())).thenAnswer(invocation -> {
+            OrdemServicoEntity os = invocation.getArgument(0);
+            os.setStatus(StatusOS.FINALIZADA);
+            return os;
+        });
 
-        OrdemServico result = service.atualizarStatus(1L, StatusOS.ABERTA);
+        OrdemServico result = service.atualizarStatus(1L, StatusOS.FINALIZADA);
 
-        assertEquals(StatusOS.ABERTA, result.getStatus());
-        verifyNoInteractions(kafkaTemplate);
+        assertEquals(StatusOS.FINALIZADA, result.getStatus());
+        verify(sagaOrchestrator).finalizar(eq(entity), anyString());
     }
 
     @Test
@@ -132,8 +120,8 @@ class OrdemServicoApplicationServiceImplTest {
         when(repository.findById(99L)).thenReturn(Optional.empty());
 
         assertNull(service.atualizarStatus(99L, StatusOS.APROVADA));
+        verifyNoInteractions(sagaOrchestrator);
         verify(repository, never()).save(any(OrdemServicoEntity.class));
-        verifyNoInteractions(kafkaTemplate);
     }
 
     @Test
@@ -162,5 +150,16 @@ class OrdemServicoApplicationServiceImplTest {
 
         assertEquals(1, result.size());
         verify(repository).findByClienteCpf("12345678909");
+    }
+
+    @Test
+    @DisplayName("Deve consultar historico da OS")
+    void shouldConsultHistory() {
+        List<OrdemServicoHistoricoEntity> historico = List.of(
+            new OrdemServicoHistoricoEntity(1L, null, "ABERTA", "criada", "SAGA-OS-1"));
+        when(sagaOrchestrator.historico(1L)).thenReturn(historico);
+
+        assertEquals(1, service.consultarHistorico(1L).size());
+        verify(sagaOrchestrator).historico(1L);
     }
 }

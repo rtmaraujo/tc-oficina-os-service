@@ -1,10 +1,19 @@
 package com.oficina.os.service.bdd;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.oficina.os.service.application.event.SagaEvent;
 import com.oficina.os.service.application.impl.OrdemServicoApplicationServiceImpl;
+import com.oficina.os.service.application.saga.SagaOrchestrator;
 import com.oficina.os.service.domain.OrdemServico;
 import com.oficina.os.service.domain.StatusOS;
 import com.oficina.os.service.infrastructure.persistence.OrdemServicoEntity;
+import com.oficina.os.service.infrastructure.persistence.OrdemServicoHistoricoEntity;
+import com.oficina.os.service.infrastructure.persistence.SagaInstanciaEntity;
+import com.oficina.os.service.infrastructure.persistence.SagaPassoEntity;
+import com.oficina.os.service.infrastructure.repository.OrdemServicoHistoricoRepository;
 import com.oficina.os.service.infrastructure.repository.OrdemServicoRepository;
+import com.oficina.os.service.infrastructure.repository.SagaInstanciaRepository;
+import com.oficina.os.service.infrastructure.repository.SagaPassoRepository;
 import io.cucumber.java.Before;
 import io.cucumber.java.pt.Dado;
 import io.cucumber.java.pt.E;
@@ -12,6 +21,7 @@ import io.cucumber.java.pt.Entao;
 import io.cucumber.java.pt.Quando;
 import org.springframework.kafka.core.KafkaTemplate;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -25,43 +35,80 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 /**
- * Step definitions do fluxo BDD da Saga de Ordem de Servico.
+ * Step definitions do fluxo BDD da Saga orquestrada.
  *
- * Usa o servico de aplicacao real com um repositorio em memoria e um KafkaTemplate
- * que apenas registra os topicos publicados, permitindo validar o fluxo completo
- * sem depender de infraestrutura externa.
+ * Usa o servico de aplicacao e o orquestrador reais, com repositorios em
+ * memoria e um KafkaTemplate que registra os topicos publicados.
  */
 public class OrdemServicoSagaSteps {
 
-    private final Map<Long, OrdemServicoEntity> bancoEmMemoria = new LinkedHashMap<>();
+    private final Map<Long, OrdemServicoEntity> bancoOs = new LinkedHashMap<>();
+    private final Map<String, SagaInstanciaEntity> bancoSagas = new LinkedHashMap<>();
+    private final List<SagaPassoEntity> passos = new ArrayList<>();
+    private final List<OrdemServicoHistoricoEntity> historico = new ArrayList<>();
     private final List<String> eventosPublicados = new ArrayList<>();
     private final AtomicLong sequenciaId = new AtomicLong(0);
 
     private OrdemServicoApplicationServiceImpl service;
+    private SagaOrchestrator orchestrator;
     private OrdemServico ultimaOrdem;
+    private SagaEvent ultimoEvento;
     private int eventosAntesDaUltimaAcao;
 
     @Before
     public void prepararServico() {
-        bancoEmMemoria.clear();
+        bancoOs.clear();
+        bancoSagas.clear();
+        passos.clear();
+        historico.clear();
         eventosPublicados.clear();
         sequenciaId.set(0);
         ultimaOrdem = null;
+        ultimoEvento = null;
         eventosAntesDaUltimaAcao = 0;
 
-        OrdemServicoRepository repository = mock(OrdemServicoRepository.class);
-
-        when(repository.save(any(OrdemServicoEntity.class))).thenAnswer(invocation -> {
+        OrdemServicoRepository osRepository = mock(OrdemServicoRepository.class);
+        when(osRepository.save(any(OrdemServicoEntity.class))).thenAnswer(invocation -> {
             OrdemServicoEntity entity = invocation.getArgument(0);
             if (entity.getId() == null) {
                 entity.setId(sequenciaId.incrementAndGet());
             }
-            bancoEmMemoria.put(entity.getId(), entity);
+            bancoOs.put(entity.getId(), entity);
             return entity;
         });
+        when(osRepository.findById(any(Long.class)))
+            .thenAnswer(invocation -> Optional.ofNullable(bancoOs.get(invocation.getArgument(0))));
 
-        when(repository.findById(any(Long.class)))
-            .thenAnswer(invocation -> Optional.ofNullable(bancoEmMemoria.get(invocation.getArgument(0))));
+        SagaInstanciaRepository sagaRepository = mock(SagaInstanciaRepository.class);
+        when(sagaRepository.save(any(SagaInstanciaEntity.class))).thenAnswer(invocation -> {
+            SagaInstanciaEntity saga = invocation.getArgument(0);
+            bancoSagas.put(saga.getSagaId(), saga);
+            return saga;
+        });
+        when(sagaRepository.findBySagaId(anyString())).thenAnswer(invocation ->
+            Optional.ofNullable(bancoSagas.get(invocation.getArgument(0))));
+        when(sagaRepository.findByOsId(any(Long.class))).thenAnswer(invocation -> {
+            Long osId = invocation.getArgument(0);
+            return bancoSagas.values().stream().filter(s -> osId.equals(s.getOsId())).findFirst();
+        });
+        when(sagaRepository.findByStatusAndDataAtualizacaoBefore(anyString(), any(LocalDateTime.class)))
+            .thenReturn(List.of());
+
+        SagaPassoRepository passoRepository = mock(SagaPassoRepository.class);
+        when(passoRepository.save(any(SagaPassoEntity.class))).thenAnswer(invocation -> {
+            SagaPassoEntity passo = invocation.getArgument(0);
+            passos.add(passo);
+            return passo;
+        });
+
+        OrdemServicoHistoricoRepository historicoRepository = mock(OrdemServicoHistoricoRepository.class);
+        when(historicoRepository.save(any(OrdemServicoHistoricoEntity.class))).thenAnswer(invocation -> {
+            OrdemServicoHistoricoEntity registro = invocation.getArgument(0);
+            historico.add(registro);
+            return registro;
+        });
+        when(historicoRepository.findByOsIdOrderByTimestampAsc(any(Long.class)))
+            .thenAnswer(invocation -> historico);
 
         @SuppressWarnings("unchecked")
         KafkaTemplate<String, String> kafkaTemplate = mock(KafkaTemplate.class);
@@ -70,11 +117,22 @@ public class OrdemServicoSagaSteps {
             return null;
         });
 
-        service = new OrdemServicoApplicationServiceImpl(repository, kafkaTemplate);
+        ObjectMapper objectMapper = new ObjectMapper();
+        orchestrator = new SagaOrchestrator(osRepository, sagaRepository, passoRepository,
+            historicoRepository, kafkaTemplate, objectMapper);
+        service = new OrdemServicoApplicationServiceImpl(osRepository, orchestrator);
     }
 
     private void registrarInicioDaAcao() {
         eventosAntesDaUltimaAcao = eventosPublicados.size();
+    }
+
+    private SagaEvent eventoParaSaga(String tipo) {
+        SagaEvent event = SagaEvent.of(tipo, ultimaOrdem != null
+            ? "SAGA-" + ultimaOrdem.getNumeroOS() : "SAGA-DESCONHECIDA");
+        event.osId = ultimaOrdem.getId();
+        event.osNumero = ultimaOrdem.getNumeroOS();
+        return event;
     }
 
     @Dado("que o servico de OS esta disponivel")
@@ -88,34 +146,48 @@ public class OrdemServicoSagaSteps {
         ultimaOrdem = service.criarOrdemServico(clienteCpf, descricao);
     }
 
-    @Quando("eu aprovar o orcamento da OS")
+    @Quando("o Billing gerar o orcamento da OS")
+    public void billingGerarOrcamento() {
+        SagaEvent event = eventoParaSaga("BUDGET_GENERATED");
+        event.codigoOrcamento = "ORC-1";
+        event.valor = 250.0;
+        ultimoEvento = event;
+        ultimaOrdem = orchestrator.onBudgetGenerated(event);
+    }
+
+    @Quando("o cliente aprovar o orcamento")
     public void aprovarOrcamento() {
-        registrarInicioDaAcao();
-        ultimaOrdem = service.atualizarStatus(ultimaOrdem.getId(), StatusOS.APROVADA);
+        ultimaOrdem = orchestrator.onBudgetApproved(eventoParaSaga("BUDGET_APPROVED"));
     }
 
-    @Quando("eu iniciar a execucao da OS")
+    @Quando("o cliente rejeitar o orcamento")
+    public void rejeitarOrcamento() {
+        ultimaOrdem = orchestrator.onBudgetRejected(eventoParaSaga("BUDGET_REJECTED"));
+    }
+
+    @Quando("o pagamento for confirmado")
+    public void confirmarPagamento() {
+        SagaEvent event = eventoParaSaga("PAYMENT_COMPLETED");
+        event.paymentId = "MP-123";
+        ultimaOrdem = orchestrator.onPaymentCompleted(event);
+    }
+
+    @Quando("a execucao iniciar o diagnostico")
     public void iniciarExecucao() {
-        registrarInicioDaAcao();
-        ultimaOrdem = service.atualizarStatus(ultimaOrdem.getId(), StatusOS.EXECUCAO);
+        SagaEvent event = eventoParaSaga("EXECUTION_STARTED");
+        event.status = "DIAGNOSTICO";
+        ultimaOrdem = orchestrator.onOrderProgress(event);
     }
 
-    @Quando("eu concluir a execucao da OS")
-    public void concluirExecucao() {
-        registrarInicioDaAcao();
-        ultimaOrdem = service.atualizarStatus(ultimaOrdem.getId(), StatusOS.CONCLUIDA);
+    @Quando("a execucao for finalizada")
+    public void finalizarExecucao() {
+        ultimaOrdem = orchestrator.onOrderFinalized(eventoParaSaga("ORDER_FINALIZED"));
     }
 
     @Quando("eu finalizar a OS")
     public void finalizarOrdemServico() {
         registrarInicioDaAcao();
         ultimaOrdem = service.atualizarStatus(ultimaOrdem.getId(), StatusOS.FINALIZADA);
-    }
-
-    @Quando("eu cancelar a OS")
-    public void cancelarOrdemServico() {
-        registrarInicioDaAcao();
-        ultimaOrdem = service.atualizarStatus(ultimaOrdem.getId(), StatusOS.CANCELADA);
     }
 
     @Entao("a OS deve estar com status {string}")
