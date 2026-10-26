@@ -24,20 +24,42 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
     producer:
+      acks: all
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 1
+    template:
+      observation-enabled: true
+    listener:
+      observation-enabled: true
 
 management:
   endpoints:
     web:
       exposure:
         include: health,info,metrics,prometheus
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: ${ZIPKIN_ENDPOINT:http://zipkin.monitoring.svc.cluster.local:9411/api/v2/spans}
   endpoint:
     health:
       show-details: always
       probes:
         enabled: true
 
+saga:
+  timeout:
+    minutes: 30
+    check-ms: 60000
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-},%X{sagaId:-}]"
 springdoc:
   api-docs:
     enabled: true

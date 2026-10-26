@@ -1,8 +1,9 @@
 package com.oficina.os.service.presentation;
 
+import com.oficina.os.service.application.OrdemServicoApplicationService;
 import com.oficina.os.service.domain.OrdemServico;
 import com.oficina.os.service.domain.StatusOS;
-import com.oficina.os.service.application.OrdemServicoApplicationService;
+import com.oficina.os.service.infrastructure.persistence.OrdemServicoHistoricoEntity;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -27,6 +28,14 @@ public class OrdemServicoController {
         OrdemServico os = applicationService.consultarPorId(id);
         if (os == null) return ResponseEntity.notFound().build();
         return ResponseEntity.ok(os);
+    }
+
+    @GetMapping("/{id}/historico")
+    public ResponseEntity<List<OrdemServicoHistoricoEntity>> historico(@PathVariable Long id) {
+        if (applicationService.consultarPorId(id) == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(applicationService.consultarHistorico(id));
     }
 
     @GetMapping("/cliente/{clienteCpf}")

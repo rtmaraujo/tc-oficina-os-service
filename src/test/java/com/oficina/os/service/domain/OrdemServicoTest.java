@@ -65,10 +65,11 @@ class OrdemServicoTest {
     @Test
     @DisplayName("Deve expor todos os status da OS")
     void shouldExposeAllStatus() {
-        assertEquals(7, StatusOS.values().length);
+        assertEquals(8, StatusOS.values().length);
         assertEquals(StatusOS.ABERTA, StatusOS.valueOf("ABERTA"));
         assertEquals(StatusOS.ORCAMENTO_GERADO, StatusOS.valueOf("ORCAMENTO_GERADO"));
         assertEquals(StatusOS.APROVADA, StatusOS.valueOf("APROVADA"));
+        assertEquals(StatusOS.PAGA, StatusOS.valueOf("PAGA"));
         assertEquals(StatusOS.EXECUCAO, StatusOS.valueOf("EXECUCAO"));
         assertEquals(StatusOS.CONCLUIDA, StatusOS.valueOf("CONCLUIDA"));
         assertEquals(StatusOS.CANCELADA, StatusOS.valueOf("CANCELADA"));
