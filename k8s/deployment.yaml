@@ -1,4 +1,4 @@
-apiVersion: apps/v1
+﻿apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: tc-oficina-os-service
@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: tc-oficina-os-service
-          image: 097735115452.dkr.ecr.us-west-2.amazonaws.com/tc-oficina-os-service:latest
+          image: 200111905660.dkr.ecr.us-west-2.amazonaws.com/tc-oficina-os-service:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8081

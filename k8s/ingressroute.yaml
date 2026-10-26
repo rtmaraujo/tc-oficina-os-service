@@ -1,4 +1,4 @@
-apiVersion: traefik.containo.us/v1alpha1
+﻿apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
   name: os-service-ingressroute
@@ -7,7 +7,7 @@ spec:
   entryPoints:
     - web
   routes:
-    - match: Host(`35.84.122.229`) && PathPrefix(`/os`)
+    - match:  PathPrefix(`/os`)
       kind: Rule
       services:
         - name: tc-oficina-os-service
@@ -15,7 +15,7 @@ spec:
       middlewares:
         - name: strip-os-prefix
 ---
-apiVersion: traefik.containo.us/v1alpha1
+apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
   name: strip-os-prefix
