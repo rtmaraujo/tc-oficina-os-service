@@ -4,7 +4,6 @@ import com.oficina.os.service.application.OrdemServicoApplicationService;
 import com.oficina.os.service.domain.OrdemServico;
 import com.oficina.os.service.domain.StatusOS;
 import com.oficina.os.service.infrastructure.persistence.OrdemServicoHistoricoEntity;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -14,8 +13,11 @@ import java.util.List;
 @RequestMapping("/api/os")
 public class OrdemServicoController {
 
-    @Autowired
-    private OrdemServicoApplicationService applicationService;
+    private final OrdemServicoApplicationService applicationService;
+
+    public OrdemServicoController(OrdemServicoApplicationService applicationService) {
+        this.applicationService = applicationService;
+    }
 
     @PostMapping
     public ResponseEntity<OrdemServico> criar(@RequestParam String clienteCpf, @RequestParam String descricao) {

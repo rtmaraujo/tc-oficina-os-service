@@ -12,7 +12,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 
@@ -30,8 +29,7 @@ class OrdemServicoControllerTest {
 
     @BeforeEach
     void setUp() {
-        controller = new OrdemServicoController();
-        ReflectionTestUtils.setField(controller, "applicationService", applicationService);
+        controller = new OrdemServicoController(applicationService);
     }
 
     private OrdemServico ordem() {
