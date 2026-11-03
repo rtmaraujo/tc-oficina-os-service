@@ -6,6 +6,7 @@ Microsserviço **orquestrador da Saga** da Oficina Mecânica. Gerencia o ciclo d
 - **Banco:** PostgreSQL (`oficina_os`)
 - **Namespace Kubernetes:** `oficina-os`
 - **Repositório:** https://github.com/rtmaraujo/tc-oficina-os-service
+- **Documentação da entrega:** https://github.com/rtmaraujo/tc-oficina-docs
 
 ## Stack
 
@@ -36,7 +37,10 @@ config/         -> Listeners Kafka
 | `POST` | `/api/os?clienteCpf={cpf}&descricao={texto}` | Cria uma OS (status `ABERTA`) |
 | `GET` | `/api/os/{id}` | Consulta OS por ID |
 | `GET` | `/api/os/cliente/{clienteCpf}` | Lista OS por cliente |
+| `GET` | `/api/os/{id}/historico` | Histórico de transições com `sagaId` |
 | `PUT` | `/api/os/{id}/status?novoStatus={status}` | Atualiza o status da OS |
+
+> No cluster, os endpoints ficam sob o prefixo `/os` (ex.: `http://44.253.115.185/os/api/os/1`).
 
 ### Exemplos
 
@@ -54,12 +58,29 @@ curl "http://localhost:8081/api/os/cliente/12345678909"
 curl -X PUT "http://localhost:8081/api/os/1/status?novoStatus=APROVADA"
 ```
 
-Swagger desabilitado no perfil local. No perfil `k8s`: `http://44.253.115.185/os/swagger-ui.html`.
+Swagger desabilitado no perfil local. No perfil `k8s`: `http://44.253.115.185/os/swagger-ui/index.html`.
+
+## Saga orquestrada
+
+Este serviço é o **orquestrador** da Saga. Ele mantém a máquina de estados, registra cada passo e dispara as compensações.
+
+```
+ABERTA → ORCAMENTO_GERADO → APROVADA → PAGA → EXECUCAO → CONCLUIDA → FINALIZADA
+                                    ↘ CANCELADA (compensação)
+```
+
+- `SagaOrchestrator` concentra as transições e a compensação (idempotente por `sagaId`).
+- `saga_instancia` guarda o estado da saga (`EM_ANDAMENTO`, `CONCLUIDA`, `COMPENSADA`) e o motivo.
+- `saga_passo` registra `OS_CRIADA`, `ORCAMENTO_GERADO`, `ORCAMENTO_APROVADO`, `PAGAMENTO_CONFIRMADO`, `EXECUCAO_INICIADA`, `EXECUCAO_FINALIZADA` e `COMPENSACAO`.
+- `ordem_servico_historico` guarda cada transição com `sagaId` e motivo.
+- `evento_processado` garante idempotência dos eventos consumidos.
+
+Diagramas completos na [documentação de arquitetura](https://github.com/rtmaraujo/tc-oficina-docs/blob/main/ARQUITETURA.md).
 
 ## Status da OS
 
-`ABERTA` → `ORCAMENTO_GERADO` → `APROVADA` → `EXECUCAO` → `CONCLUIDA` → `FINALIZADA`
-Caminho alternativo: `CANCELADA`.
+`ABERTA` → `ORCAMENTO_GERADO` → `APROVADA` → `PAGA` → `EXECUCAO` → `CONCLUIDA` → `FINALIZADA`
+Caminho alternativo: `CANCELADA` (compensação por orçamento rejeitado, pagamento recusado, timeout de 30 minutos sem evolução ou cancelamento manual).
 
 ## Modelo de dados
 
@@ -76,19 +97,36 @@ Tabela `ordem_servico`:
 | `data_criacao` | LocalDateTime | preenchida na criação |
 | `data_atualizacao` | LocalDateTime | atualizada a cada mudança de status |
 
+Tabelas da Saga:
+
+| Tabela | Campos principais |
+|---|---|
+| `saga_instancia` | `saga_id`, `os_id`, `os_numero`, `status` (`EM_ANDAMENTO`/`CONCLUIDA`/`COMPENSADA`), `passo_atual`, `motivo` |
+| `saga_passo` | `saga_id`, `passo`, `status`, `detalhe`, `timestamp` |
+| `ordem_servico_historico` | `os_id`, `status_anterior`, `status_novo`, `motivo`, `saga_id`, `timestamp` |
+| `evento_processado` | `event_id`, `topico` (idempotência) |
+
 ## Eventos Kafka
 
-| Evento | Direção | Quando |
+| Tópico | Direção | Quando |
 |---|---|---|
 | `os-created` | Produz | Ao criar a OS |
-| `budget-approved` | Produz | Status alterado para `APROVADA` |
-| `order-finalized` | Produz | Status alterado para `EXECUCAO` |
-| `order-completed` | Produz | Status alterado para `CONCLUIDA` |
-| `order-cancelled` | Produz | Status alterado para `CANCELADA` |
-| `budget-approved` | Consome | Listener `os-service-group` |
-| `order-finalized` | Consome | Listener `os-service-group` |
+| `execution-requested` | Produz | Após `payment-completed` (OS `PAGA`) |
+| `compensate-budget` | Produz | Ao compensar a saga |
+| `compensate-execution` | Produz | Ao compensar a saga |
+| `saga-compensated` | Produz | Auditoria do fechamento da saga compensada |
+| `budget-generated` | Consome | Orçamento criado → OS `ORCAMENTO_GERADO` |
+| `budget-approved` | Consome | Orçamento aprovado → OS `APROVADA` |
+| `budget-rejected` | Consome | Orçamento rejeitado → compensação |
+| `payment-completed` | Consome | Pagamento confirmado → OS `PAGA` |
+| `payment-failed` | Consome | Pagamento recusado → compensação |
+| `order-progress` | Consome | Execução iniciada → OS `EXECUCAO` |
+| `order-finalized` | Consome | Execução finalizada → OS `CONCLUIDA` |
+| `execution-compensated` | Consome | Confirmação da compensação da execução |
 
-> `FINALIZADA` (e demais status sem regra) não publica evento.
+Grupo de consumo: `os-service-group`. Todos os tópicos têm `.DLT` para mensagens que esgotam as tentativas.
+
+> `FINALIZADA` é uma transição manual (`PUT /api/os/{id}/status?novoStatus=FINALIZADA`) e não publica evento.
 
 ## Configuração
 
@@ -126,11 +164,11 @@ mvn test              # testes unitários
 mvn verify            # testes + jacoco:check (mínimo 85% LINE e BRANCH)
 ```
 
-- Testes unitários: domínio, entidade de persistência e serviço de aplicação.
+- Testes unitários: domínio, entidade de persistência, serviço de aplicação, orquestrador da Saga e listeners.
 - **BDD (Cucumber):** `src/test/resources/features/ordem-servico-saga.feature`
   - Fluxo completo: criação → aprovação → execução → conclusão → finalização.
   - Cenário de cancelamento.
-- Cobertura atual: **100%** de linhas e branches.
+- Cobertura atual: **66 testes**, **100%** de linhas e **96,36%** de branches.
 - Relatório: `target/site/jacoco/index.html`.
 
 O build falha se a cobertura ficar abaixo de 85%, via `jacoco-maven-plugin` (`check`).
@@ -170,7 +208,12 @@ kubectl apply -f k8s/ingressroute.yaml
 
 ## Observabilidade
 
-Actuator exposto em `/actuator` (`health`, `info`, `metrics`, `prometheus` no perfil `k8s`).
+- Actuator em `/actuator` (`health`, `info`, `metrics`, `prometheus` no perfil `k8s`).
+- Probes de readiness/liveness em `/actuator/health/readiness` e `/actuator/health/liveness`.
+- Métricas coletadas pelo Prometheus: `http://44.253.115.185/prometheus/`.
+- Dashboard: `http://44.253.115.185/grafana/` → **Oficina Fase 4 - Microsservicos**.
+- Traces distribuídos no Zipkin: `http://44.253.115.185/zipkin/`.
+- O `sagaId` é propagado no MDC e aparece nos logs, permitindo correlacionar a OS entre os três serviços.
 
 ## Estrutura
 
